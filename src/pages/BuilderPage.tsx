@@ -11,6 +11,8 @@ import {
   DragOverlay,
 } from '@dnd-kit/core';
 import type { DragEndEvent, DragStartEvent } from '@dnd-kit/core';
+import { useNavigate } from 'react-router-dom';
+import { supabase } from '../lib/supabase';
 import { PersonaSelector } from '../components/PersonaSelector';
 import { MemorySettings } from '../components/MemorySettings';
 
@@ -23,7 +25,10 @@ interface Tool {
 
 function DraggableTool({ tool }: { tool: Tool }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } =
-    useDraggable({ id: tool.id });
+    useDraggable({
+      id: tool.id,
+      data: { type: 'tool', tool },
+    });
 
   const style = {
     transform: transform
@@ -53,7 +58,13 @@ function DraggableTool({ tool }: { tool: Tool }) {
   );
 }
 
-function CanvasTool({ tool, onRemove }: { tool: Tool; onRemove: () => void }) {
+function CanvasTool({
+  tool,
+  onRemove,
+}: {
+  tool: Tool;
+  onRemove: () => void;
+}) {
   return (
     <div className="group relative bg-white border border-gray-200 rounded-lg p-4 mb-3 shadow-sm hover:shadow-md transition-shadow">
       <button
@@ -74,71 +85,86 @@ function CanvasTool({ tool, onRemove }: { tool: Tool; onRemove: () => void }) {
   );
 }
 
+function DroppableCanvas({
+  children,
+  isOver,
+}: {
+  children: React.ReactNode;
+  isOver: boolean;
+}) {
+  const { setNodeRef } = useDroppable({
+    id: 'canvas',
+    data: { accepts: ['tool'], type: 'canvas' },
+  });
+
+  return (
+    <div
+      ref={setNodeRef}
+      className={`
+        flex-1 border-2 border-dashed rounded-xl p-6 transition-all duration-200 min-h-[500px]
+        ${isOver ? 'border-blue-400 bg-blue-50' : 'border-gray-300 bg-gray-50'}
+      `}
+      style={{ position: 'relative', zIndex: 1 }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export default function BuilderPage() {
-  // 1) Define your tools palette with better descriptions and icons
+  const navigate = useNavigate();
+
   const tools: Tool[] = [
-    { 
-      id: 'web-search', 
-      label: 'Web Search', 
+    {
+      id: 'web-search',
+      label: 'Web Search',
       icon: '🔍',
-      description: 'Search the web for real-time information'
+      description: 'Search the web for real-time information',
     },
-    { 
-      id: 'calculator', 
-      label: 'Calculator', 
+    {
+      id: 'calculator',
+      label: 'Calculator',
       icon: '🧮',
-      description: 'Perform mathematical calculations'
+      description: 'Perform mathematical calculations',
     },
-    { 
-      id: 'custom-prompt', 
-      label: 'Custom Prompt', 
+    {
+      id: 'custom-prompt',
+      label: 'Custom Prompt',
       icon: '✍️',
-      description: 'Add custom instructions or prompts'
+      description: 'Add custom instructions or prompts',
     },
-    { 
-      id: 'code-executor', 
-      label: 'Code Executor', 
+    {
+      id: 'code-executor',
+      label: 'Code Executor',
       icon: '⚡',
-      description: 'Execute code snippets safely'
+      description: 'Execute code snippets safely',
     },
-    { 
-      id: 'file-analyzer', 
-      label: 'File Analyzer', 
+    {
+      id: 'file-analyzer',
+      label: 'File Analyzer',
       icon: '📄',
-      description: 'Analyze and process files'
+      description: 'Analyze and process files',
     },
   ];
 
-  // 2) State for dropped tools and active drag
+  // builder state
   const [canvasTools, setCanvasTools] = useState<Tool[]>([]);
   const [activeTool, setActiveTool] = useState<Tool | null>(null);
+  const [persona, setPersona] = useState<string>('Coach');
+  const [memoryConfig, setMemoryConfig] = useState<Record<string, any>>({});
 
-  // 3) Sensors with better configuration
-  const sensors = useSensors(
-    useSensor(PointerSensor, {
-      activationConstraint: {
-        distance: 8, // Require 8px of movement before dragging starts
-      },
-    })
-  );
+  // DnD sensors
+  const sensors = useSensors(useSensor(PointerSensor));
+  const { isOver } = useDroppable({ id: 'canvas' });
 
-  // 4) Make the canvas droppable
-  const { isOver, setNodeRef: setDroppableRef } = useDroppable({ 
-    id: 'canvas' 
-  });
-
-  // 5) Handle drag start
   function handleDragStart(event: DragStartEvent) {
-    const tool = tools.find((t) => t.id === event.active.id);
-    setActiveTool(tool || null);
+    const tool = tools.find((t) => t.id === event.active.id) ?? null;
+    setActiveTool(tool);
   }
 
-  // 6) Handle drag end
   function handleDragEnd(event: DragEndEvent) {
-    const { active, over } = event;
-    
     setActiveTool(null);
-    
+    const { active, over } = event;
     if (over?.id === 'canvas') {
       const tool = tools.find((t) => t.id === active.id);
       if (tool && !canvasTools.some((t) => t.id === tool.id)) {
@@ -147,9 +173,30 @@ export default function BuilderPage() {
     }
   }
 
-  // 7) Remove tool from canvas
   function removeTool(toolId: string) {
     setCanvasTools((prev) => prev.filter((t) => t.id !== toolId));
+  }
+
+  // **NEW**: save handler
+  async function handleSave() {
+    const payload = {
+      persona,
+      memory: memoryConfig,
+      blocks: canvasTools.map((t) => t.id),
+      created_at: new Date(),
+    };
+
+    const { data, error } = await supabase
+      .from('agents')
+      .insert([payload])
+      .select('id')
+      .single();
+
+    if (error) {
+      console.error('Save failed:', error);
+      return alert('Failed to save agent.');
+    }
+    navigate(`/agents/${data.id}`);
   }
 
   return (
@@ -161,22 +208,25 @@ export default function BuilderPage() {
     >
       <div className="min-h-screen bg-gray-50">
         {/* Header */}
-        <header className="bg-white border-b border-gray-200 px-6 py-4">
-          <div className="flex items-center justify-between">
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Agent Builder</h1>
-              <p className="text-sm text-gray-600 mt-1">
-                Drag and drop tools to create your custom AI agent
-              </p>
-            </div>
-            <div className="flex space-x-3">
-              <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                Preview
-              </button>
-              <button className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
-                Save Agent
-              </button>
-            </div>
+        <header className="bg-white border-b border-gray-200 px-6 py-4 flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900">
+              Agent Builder
+            </h1>
+            <p className="text-sm text-gray-600 mt-1">
+              Drag and drop tools to create your custom AI agent
+            </p>
+          </div>
+          <div className="flex space-x-3">
+            <button className="px-4 py-2 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              Preview
+            </button>
+            <button
+              onClick={handleSave}
+              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 border border-transparent rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-blue-500"
+            >
+              Save Agent
+            </button>
           </div>
         </header>
 
@@ -184,18 +234,28 @@ export default function BuilderPage() {
           {/* Sidebar */}
           <aside className="w-80 bg-white border-r border-gray-200 overflow-y-auto">
             <div className="p-6 space-y-6">
-              {/* Configuration Sections */}
+              {/* Configuration */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Configuration</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Configuration
+                </h3>
                 <div className="space-y-4">
-                  <PersonaSelector />
-                  <MemorySettings />
+                  <PersonaSelector
+                    value={persona}
+                    onChange={(v) => setPersona(v)}
+                  />
+                  <MemorySettings
+                    config={memoryConfig}
+                    onChange={(cfg) => setMemoryConfig(cfg)}
+                  />
                 </div>
               </div>
 
               {/* Tools Panel */}
               <div>
-                <h3 className="text-lg font-semibold text-gray-900 mb-4">Available Tools</h3>
+                <h3 className="text-lg font-semibold text-gray-900 mb-4">
+                  Available Tools
+                </h3>
                 <div className="space-y-2">
                   {tools.map((tool) => (
                     <DraggableTool key={tool.id} tool={tool} />
@@ -208,14 +268,16 @@ export default function BuilderPage() {
           {/* Main Canvas Area */}
           <main className="flex-1 p-6">
             <div className="h-full flex flex-col">
+              {/* Canvas header */}
               <div className="flex items-center justify-between mb-6">
                 <div>
-                  <h2 className="text-xl font-semibold text-gray-900">Agent Canvas</h2>
+                  <h2 className="text-xl font-semibold text-gray-900">
+                    Agent Canvas
+                  </h2>
                   <p className="text-sm text-gray-600 mt-1">
-                    {canvasTools.length === 0 
-                      ? "Drop tools here to build your agent" 
-                      : `${canvasTools.length} tools added`
-                    }
+                    {canvasTools.length === 0
+                      ? 'Drop tools here to build your agent'
+                      : `${canvasTools.length} tools added`}
                   </p>
                 </div>
                 {canvasTools.length > 0 && (
@@ -229,18 +291,7 @@ export default function BuilderPage() {
               </div>
 
               {/* Drop Zone */}
-              <div
-                ref={setDroppableRef}
-                className={`
-                  flex-1 border-2 border-dashed rounded-xl p-6 transition-all duration-200
-                  ${isOver 
-                    ? 'border-blue-400 bg-blue-50' 
-                    : canvasTools.length === 0
-                      ? 'border-gray-300 bg-gray-50'
-                      : 'border-gray-200 bg-white'
-                  }
-                `}
-              >
+              <DroppableCanvas isOver={isOver}>
                 {canvasTools.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-full text-center">
                     <div className="text-6xl mb-4">🤖</div>
@@ -248,8 +299,9 @@ export default function BuilderPage() {
                       Start Building Your Agent
                     </h3>
                     <p className="text-gray-600 max-w-md">
-                      Drag tools from the sidebar to this area to add them to your agent. 
-                      Each tool will enhance your agent's capabilities.
+                      Drag tools from the sidebar to this area to add them to
+                      your agent. Each tool will enhance your agent’s
+                      capabilities.
                     </p>
                   </div>
                 ) : (
@@ -263,26 +315,29 @@ export default function BuilderPage() {
                     ))}
                   </div>
                 )}
-              </div>
+              </DroppableCanvas>
             </div>
           </main>
         </div>
-      </div>
 
-      {/* Drag Overlay */}
-      <DragOverlay>
-        {activeTool ? (
-          <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-lg opacity-90">
-            <div className="flex items-center space-x-3">
-              <div className="text-2xl">{activeTool.icon}</div>
-              <div>
-                <h4 className="font-medium text-gray-900">{activeTool.label}</h4>
-                <p className="text-sm text-gray-500">{activeTool.description}</p>
+        <DragOverlay>
+          {activeTool ? (
+            <div className="bg-white border border-gray-200 rounded-lg p-4 shadow-lg opacity-90">
+              <div className="flex items-center space-x-3">
+                <div className="text-2xl">{activeTool.icon}</div>
+                <div>
+                  <h4 className="font-medium text-gray-900">
+                    {activeTool.label}
+                  </h4>
+                  <p className="text-sm text-gray-500">
+                    {activeTool.description}
+                  </p>
+                </div>
               </div>
             </div>
-          </div>
-        ) : null}
-      </DragOverlay>
+          ) : null}
+        </DragOverlay>
+      </div>
     </DndContext>
   );
 }
