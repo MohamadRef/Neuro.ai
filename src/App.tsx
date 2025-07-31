@@ -1,9 +1,19 @@
+// src/App.tsx
+import { Routes, Route, Navigate } from 'react-router-dom';
+import BuilderPage from './pages/BuilderPage';
+import ChatPage from './pages/ChatPage';
+
 export default function App() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
-      <h1 className="text-4xl font-bold text-blue-600">
-        Tailwind is working!
-      </h1>
-    </div>
+    <Routes>
+      {/* Redirect “/” to “/builder” */}
+      <Route path="/" element={<Navigate to="/builder" replace />} />
+
+      {/* Your builder UI */}
+      <Route path="/builder" element={<BuilderPage />} />
+
+      {/* Shared/chat view */}
+      <Route path="/agents/:agentId" element={<ChatPage />} />
+    </Routes>
   );
 }
